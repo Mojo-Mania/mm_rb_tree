@@ -10,6 +10,7 @@ version = "0.1.0"
 test = "mojo -I . test/test_rb_tree.mojo"
 main = "mojo -I . examples/main.mojo"
 bench = "mojo -D ASSERT=none -I . benchmarks/bench_rb_tree.mojo"
+bench-corpora = "mojo -D ASSERT=none -I . benchmarks/bench_corpora.mojo"
 format = "mojo format ./"
 docs = "mojo doc --diagnose-missing-doc-strings -o /dev/null mm_rb_tree/"
 

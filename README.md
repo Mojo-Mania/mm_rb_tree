@@ -126,10 +126,77 @@ Reading the table:
 - **If you only need membership, use the stdlib `Set`.** It wins that column by
   5×, and this structure is for when order matters.
 
+### Real words
+
+The tables above use generated elements. `corpora/` holds twelve word lists —
+Latin, Greek, Hebrew, Arabic, Georgian, Devanagari and CJK scripts, plus a list
+of AWS S3 action names — taken from
+[compact-dict](https://github.com/mzaks/compact-dict). They matter more to an
+ordered set than to most containers: a tree pays for a comparison at every level
+of its descent, and real words share prefixes and arrive in orders that
+generated input never reproduces. `pixi run bench-corpora` runs them.
+
+Probes are independently allocated strings. Mojo's `String` is copy-on-write, so
+probing with the very object that was inserted lets `__eq__` answer on pointer
+identity and skip the byte comparison — that measures the copy-on-write, not the
+container.
+
+#### Long keys favour a tree over a hash set
+
+| corpus | avg bytes | `RBTree` | `Set` | `SortedList` |
+| --- | --- | --- | --- | --- |
+| english | 5 | 19.1 | **7.3** | 24.7 |
+| hindi | 18 | 31.7 | **8.8** | 39.6 |
+| chinese | 464 | **26.4** | 51.5 | 46.1 |
+| japanese | 499 | **28.3** | 55.0 | 47.3 |
+
+Nanoseconds per lookup. On ordinary words a hash set wins, as it should: it
+hashes once where a tree compares at every level. On the CJK corpora, whose
+"words" are whole paragraphs of 400–560 bytes, that reverses — a hash set must
+read every byte of the key to hash it, while a comparison usually decides in the
+first few. Generated keys of uniform length never show this.
+
+#### Order of arrival does not matter
+
+The S3 action list is mostly alphabetical — a longest ascending run of 64 out of
+161, where the natural-language corpora run 4 to 6. A red-black tree rebalances
+as it goes, so it barely notices:
+
+| corpus | `RBTree` | `mm_fiby_tree` |
+| --- | --- | --- |
+| s3_actions, insert | **41.4 ns** | 81.2 ns |
+| s3_actions, membership | **24.4 ns** | 50.2 ns |
+| s3_actions, vocabulary | **7.3 µs** | 13.1 µs |
+| english, insert | 28.3 ns | 27.3 ns |
+
+On randomly ordered words the two are level; on sorted input this one is twice
+as fast. That is the trade the two libraries make — see
+[mm_fiby_tree](https://github.com/Mojo-Mania/mm_fiby_tree), which is cheaper to
+rebuild but degrades on monotonic input.
+
+#### Producing a vocabulary in order
+
+The reason to keep an ordered set at all: corpus in, alphabetical vocabulary
+out. Microseconds per corpus.
+
+| corpus | distinct | `RBTree` | `Set` + sort | `SortedList` |
+| --- | --- | --- | --- | --- |
+| french | 418 | **15.2** | 15.7 | 25.7 |
+| s3_actions | 143 | 7.3 | 7.8 | **6.1** |
+| hebrew | 231 | **12.4** | 12.5 | 14.5 |
+| l33t | 339 | 14.0 | **13.8** | 21.0 |
+| english | 192 | 24.3 | **14.2** | 26.2 |
+
+The tree wins where most words are distinct, and loses where they are not:
+english is 999 words but only 192 of them, so the hash set absorbs 807 duplicate
+inserts cheaply and then sorts a short list.
+
+
 ## Development
 
 ```bash
 pixi run test     # the test suite (57 tests)
+pixi run bench-corpora  # the corpus tables
 pixi run bench    # the benchmarks above
 pixi run main     # the example
 pixi run format   # mojo format

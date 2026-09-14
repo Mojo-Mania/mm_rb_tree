@@ -1,3 +1,4 @@
+from corpora import load, names
 from mm_rb_tree import RBTree
 from std.testing import (
     TestSuite,
@@ -682,6 +683,102 @@ def _bit_width(n: Int) -> Int:
         value >>= 1
         width += 1
     return width
+
+
+# ===-----------------------------------------------------------------------===#
+# Real corpora
+#
+# The tests above use generated elements, which are uniform and ASCII. Real
+# words are neither, and an ordered set is exactly where that matters: ordering
+# multi-byte UTF-8 is a different job from ordering `Int`s, and a corpus of
+# Greek or Devanagari words exercises it as generated input cannot. The word
+# lists come from github.com/mzaks/compact-dict.
+# ===-----------------------------------------------------------------------===#
+
+
+def distinct_words(name: StringSlice) raises -> List[String]:
+    """The corpus with duplicates removed, in first-seen order."""
+    var words = load(name)
+    var seen = Dict[String, Bool]()
+    var result = List[String]()
+    for i in range(len(words)):
+        if words[i] not in seen:
+            seen[words[i]] = True
+            result.append(words[i])
+    return result^
+
+
+def test_corpus_iterates_in_sorted_order() raises:
+    """Every corpus comes back out in order, and complete.
+
+    This is the whole promise of the container, and the multi-byte scripts are
+    where an ordering bug would hide -- a comparison that works on ASCII can
+    still get Greek or Devanagari wrong.
+    """
+    for name in names():
+        var words = distinct_words(name)
+        var t = RBTree[String]()
+        for i in range(len(words)):
+            t.add(words[i])
+        assert_equal(len(t), len(words), name)
+
+        var expected = words.copy()
+        sort(expected)
+        var index = 0
+        var previous = String("")
+        for element in t:
+            assert_equal(element, expected[index], name)
+            if index > 0:
+                assert_true(previous < element, String(name, ": out of order"))
+            previous = element
+            index += 1
+        assert_equal(index, len(words), name)
+
+
+def test_corpus_membership_matches_a_reference() raises:
+    """Every word present, and words from another script absent."""
+    for name in names():
+        var words = distinct_words(name)
+        var t = RBTree[String]()
+        for i in range(len(words)):
+            t.add(words[i])
+        for i in range(len(words)):
+            assert_true(words[i] in t, name)
+
+        var absent = distinct_words(
+            "georgian" if name != "georgian" else "hindi"
+        )
+        var known = Dict[String, Bool]()
+        for i in range(len(words)):
+            known[words[i]] = True
+        for i in range(len(absent)):
+            if absent[i] not in known:
+                assert_false(absent[i] in t, absent[i])
+
+
+def test_corpus_delete_every_other_word_keeps_order() raises:
+    """Deleting half a corpus leaves the other half sorted and complete."""
+    for name in names():
+        var words = distinct_words(name)
+        var t = RBTree[String]()
+        for i in range(len(words)):
+            t.add(words[i])
+
+        var ordered = words.copy()
+        sort(ordered)
+        var kept = List[String]()
+        for i in range(len(ordered)):
+            if i % 2 == 0:
+                assert_true(t.delete(ordered[i]), ordered[i])
+            else:
+                kept.append(ordered[i])
+
+        assert_equal(len(t), len(kept), name)
+        var index = 0
+        for element in t:
+            assert_equal(element, kept[index], name)
+            index += 1
+        assert_equal(index, len(kept), name)
 
 
 def main() raises:
