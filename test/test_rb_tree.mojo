@@ -781,5 +781,78 @@ def test_corpus_delete_every_other_word_keeps_order() raises:
         assert_equal(index, len(kept), name)
 
 
+@fieldwise_init
+struct Boxed(Comparable, Copyable, Deinitable, Movable):
+    """An element that owns heap memory, so its destructor must not run on
+    uninitialized storage.
+
+    A `String` is too forgiving for this: destroying a scribbled one does
+    nothing observable. A `List` frees whatever pointer it finds.
+    """
+
+    var key: Int
+    var payload: List[Int]
+
+    def __lt__(self, other: Self) -> Bool:
+        return self.key < other.key
+
+    def __le__(self, other: Self) -> Bool:
+        return self.key <= other.key
+
+    def __gt__(self, other: Self) -> Bool:
+        return self.key > other.key
+
+    def __ge__(self, other: Self) -> Bool:
+        return self.key >= other.key
+
+    def __eq__(self, other: Self) -> Bool:
+        return self.key == other.key
+
+    def __ne__(self, other: Self) -> Bool:
+        return self.key != other.key
+
+
+def boxed(key: Int) -> Boxed:
+    var payload = List[Int](capacity=4)
+    payload.append(key)
+    return Boxed(key, payload^)
+
+
+def test_owning_elements_are_not_destroyed_at_the_nil_slot() raises:
+    """Slot 0 is the `_NIL` sentinel and never holds an element.
+
+    It is counted in `_count` all the same, so destroying, copying or moving
+    `_count` elements from slot 0 touches uninitialized storage. With an `Int`
+    that is invisible; with an element that owns memory it frees whatever
+    pointer happened to be there. Every bulk path is exercised here: growth,
+    copy, move, clear and destruction.
+
+    Run the suite under `MallocPreScribble=1` to make the uninitialized bytes
+    non-zero, which is what turns this from probabilistic into reliable.
+    """
+    for round in range(8):
+        var tree = RBTree[Boxed]()
+        for i in range(150):  # several reallocations
+            tree.add(boxed(round * 1000 + i))
+        assert_equal(len(tree), 150)
+
+        var duplicate = tree.copy()
+        for i in range(150, 300):
+            tree.add(boxed(round * 1000 + i))
+        assert_equal(len(duplicate), 150)
+        assert_equal(len(tree), 300)
+        assert_true(boxed(round * 1000 + 7) in duplicate)
+
+        var moved = duplicate^
+        assert_equal(len(moved), 150)
+        _ = moved.delete(boxed(round * 1000 + 7))
+        assert_equal(len(moved), 149)
+
+        tree.clear()
+        assert_equal(len(tree), 0)
+        tree.add(boxed(-1))
+        assert_equal(len(tree), 1)
+
+
 def main() raises:
     TestSuite.discover_tests[__functions_in_module()]().run()

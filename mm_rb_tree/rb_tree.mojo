@@ -162,8 +162,11 @@ struct RBTree[
         self._root = copy._root
         self._elements = Self._alloc_elements(copy._capacity)
         self._links = Self._alloc_links(copy._capacity)
+        # Slot 0 is the `_NIL` sentinel and holds nothing to copy.
         unsafe_uninit_copy_n[overlapping=False](
-            dest=self._elements, src=copy._elements, count=copy._count
+            dest=self._elements.unsafe_offset(1),
+            src=copy._elements.unsafe_offset(1),
+            count=copy._count - 1,
         )
         unsafe_memcpy(
             dest=self._links,
@@ -185,7 +188,11 @@ struct RBTree[
 
     def __deinit__(deinit self):
         """Destroys the live elements and releases both buffers."""
-        unsafe_destroy_n(self._elements, self._count)
+        # From slot 1: slot 0 is the `_NIL` sentinel, which is counted in
+        # `_count` but never holds an element. Destroying it ran a destructor
+        # over uninitialized memory -- harmless for an `Int`, a segfault for a
+        # `String`, whose header would be decremented as a refcount.
+        unsafe_destroy_n(self._elements.unsafe_offset(1), self._count - 1)
         Self._free_elements(self._elements, self._capacity)
         Self._free_links(self._links, self._capacity)
 
@@ -286,8 +293,11 @@ struct RBTree[
             capacity = needed
 
         var elements = Self._alloc_elements(capacity)
+        # Slot 0 is the `_NIL` sentinel and holds nothing to move.
         unsafe_uninit_move_n[overlapping=False](
-            dest=elements, src=self._elements, count=self._count
+            dest=elements.unsafe_offset(1),
+            src=self._elements.unsafe_offset(1),
+            count=self._count - 1,
         )
         Self._free_elements(self._elements, self._capacity)
         self._elements = elements
@@ -516,7 +526,10 @@ struct RBTree[
     def _new_node(mut self, element: Self.T, parent: Int) -> Int:
         var index = self._count
         debug_assert(
-            index <= Int(Self.Index.MAX),
+            # Compared in the unsigned domain: `Int(Scalar[uint32].MAX)`
+            # wraps to -1, which made this guard fire on the first node
+            # instead of the last.
+            UInt(index) <= UInt(Self.Index.MAX.cast[DType.uint64]()),
             "RBTree: node index type is too narrow for this many elements",
         )
         self._reserve(index + 1)
